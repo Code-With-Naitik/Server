@@ -6,7 +6,8 @@ const fs = require('fs');
 const checkUsageLimit = require('../middleware/usageLimit');
 
 const path = require('path');
-const uploadsDir = process.env.VERCEL ? path.join('/tmp', 'uploads') : 'uploads/';
+const uploadsDir = process.env.VERCEL ? path.join('/tmp', 'uploads') : path.join(__dirname, '../uploads');
+
 const router = express.Router();
 const upload = multer({ dest: uploadsDir }); // Temporary storage
 
@@ -46,10 +47,17 @@ const removeBgFromFile = async (file) => {
       },
     });
 
-    fs.unlinkSync(file.path);
+    if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
     return { buffer: response.data, originalName: file.originalname };
   } catch (error) {
-    if (file) fs.unlinkSync(file.path);
+    if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+    
+    // Log more detail for debugging
+    if (error.response && error.response.data) {
+      const errorMsg = error.response.data.toString();
+      console.error('remove.bg API Error:', errorMsg);
+    }
+    
     throw error;
   }
 };
@@ -68,7 +76,7 @@ router.post('/remove-bg', checkUsageLimit, upload.array('image_files', 5), async
       return res.send(results[0].buffer);
     }
 
-    // If multiple files, send as JSON with base64 (since multipart/related is complex)
+    // If multiple files, send as JSON with base64
     const base64Results = results.map(r => ({
       name: r.originalName,
       data: `data:image/png;base64,${r.buffer.toString('base64')}`
@@ -77,7 +85,14 @@ router.post('/remove-bg', checkUsageLimit, upload.array('image_files', 5), async
     res.json({ success: true, files: base64Results });
   } catch (error) {
     console.error('Error removing backgrounds:', error.message);
-    res.status(500).json({ success: false, error: 'Background removal failed for one or more files.' });
+    const statusCode = error.response?.status || 500;
+    const errorDetail = error.response?.data?.toString() || error.message;
+    
+    res.status(statusCode).json({ 
+      success: false, 
+      error: 'Background removal failed. ' + (error.response ? 'API Error' : 'Server Error'),
+      detail: errorDetail
+    });
   }
 });
 
