@@ -2,7 +2,15 @@ const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const BlogPost = require('../models/BlogPost');
 
+const dns = require('dns');
 dotenv.config();
+
+// Force DNS resolver to handle SRV records properly
+try {
+  dns.setServers(['8.8.8.8', '8.8.4.4']);
+} catch (e) {
+  console.warn('Could not set custom DNS servers');
+}
 
 const posts = [
   {
@@ -112,7 +120,9 @@ const posts = [
 
 const seedDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGO_URI);
+    await mongoose.connect(process.env.MONGO_URI, {
+      family: 4 // Force IPv4 for SRV resolution
+    });
     console.log('MongoDB Connected');
 
     await BlogPost.deleteMany({});

@@ -7,12 +7,20 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
+const dns = require('dns');
+
+// Force DNS resolver for MongoDB SRV resolution
+try {
+  dns.setServers(['8.8.8.8', '8.8.4.4']);
+} catch (e) {
+  console.warn('Could not set custom DNS servers');
+}
 
 // Load env vars
 dotenv.config();
 
-// Disable buffering to prevent hanging when DB is down
-mongoose.set('bufferCommands', false);
+// Enable buffering but with a strict timeout
+mongoose.set('bufferCommands', true);
 
 const app = express();
 
@@ -70,7 +78,8 @@ try {
 const connectDB = async () => {
   try {
     const conn = await mongoose.connect(process.env.MONGO_URI, {
-      family: 4 // Force IPv4 to avoid SRV/DNS resolution issues
+      family: 4, // Force IPv4 for SRV resolution
+      serverSelectionTimeoutMS: 5000 // Fail after 5 seconds instead of hanging
     });
     console.log(`MongoDB Connected: ${conn.connection.host}`);
   } catch (err) {

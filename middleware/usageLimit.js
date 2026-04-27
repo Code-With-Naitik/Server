@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const UsageLog = require('../models/UsageLog');
 
-const MAX_FREE_IMAGES_PER_DAY = 5;
+const MAX_FREE_IMAGES_PER_DAY = 50;
 
 const checkUsageLimit = async (req, res, next) => {
   // If MongoDB is not connected, skip the check to prevent hanging

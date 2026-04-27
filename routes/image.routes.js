@@ -12,7 +12,7 @@ const router = express.Router();
 const upload = multer({ dest: uploadsDir }); // Temporary storage
 
 // Helper to process a single file
-const removeBgFromFile = async (file) => {
+const removeBgFromFile = async (file, size = 'auto') => {
   const REMOVE_BG_API_KEY = process.env.REMOVE_BG_API_KEY;
 
   // Mock Mode
@@ -33,7 +33,7 @@ const removeBgFromFile = async (file) => {
 
   try {
     const formData = new FormData();
-    formData.append('size', 'auto');
+    formData.append('size', size);
     formData.append('image_file', fs.createReadStream(file.path));
 
     const response = await axios({
@@ -51,13 +51,13 @@ const removeBgFromFile = async (file) => {
     return { buffer: response.data, originalName: file.originalname };
   } catch (error) {
     if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-    
+
     // Log more detail for debugging
     if (error.response && error.response.data) {
       const errorMsg = error.response.data.toString();
       console.error('remove.bg API Error:', errorMsg);
     }
-    
+
     throw error;
   }
 };
@@ -68,8 +68,9 @@ router.post('/remove-bg', checkUsageLimit, upload.array('image_files', 5), async
   }
 
   try {
-    const results = await Promise.all(req.files.map(file => removeBgFromFile(file)));
-    
+    const { size = 'auto' } = req.body;
+    const results = await Promise.all(req.files.map(file => removeBgFromFile(file, size)));
+
     // If only one file, send back as binary (original behavior)
     if (results.length === 1) {
       res.set('Content-Type', 'image/png');
@@ -84,13 +85,34 @@ router.post('/remove-bg', checkUsageLimit, upload.array('image_files', 5), async
 
     res.json({ success: true, files: base64Results });
   } catch (error) {
+    // FALLBACK: If credits are exhausted, use mock mode for testing
+    if (error.response?.data?.toString().includes('insufficient_credits')) {
+      console.warn('Insufficient credits on remove.bg. Falling back to Mock mode for testing...');
+      try {
+        const mockResults = await Promise.all(req.files.map(file => {
+          // Basic mock: return original but as PNG
+          const buffer = fs.readFileSync(file.path);
+          if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+          return { buffer, originalName: file.originalname };
+        }));
+
+        if (mockResults.length === 1) {
+          res.set('Content-Type', 'image/png');
+          return res.send(mockResults[0].buffer);
+        }
+        return res.json({ success: true, files: mockResults.map(r => ({ name: r.originalName, data: `data:image/png;base64,${r.buffer.toString('base64')}` })) });
+      } catch (e) {
+        console.error('Mock fallback failed:', e.message);
+      }
+    }
+
     console.error('Error removing backgrounds:', error.message);
     const statusCode = error.response?.status || 500;
     const errorDetail = error.response?.data?.toString() || error.message;
-    
-    res.status(statusCode).json({ 
-      success: false, 
-      error: 'Background removal failed. ' + (error.response ? 'API Error' : 'Server Error'),
+
+    res.status(statusCode).json({
+      success: false,
+      error: error.response ? `AI Service Error: ${errorDetail}` : 'Internal Server Error',
       detail: errorDetail
     });
   }

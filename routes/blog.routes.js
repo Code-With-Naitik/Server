@@ -11,7 +11,8 @@ router.get('/', async (req, res) => {
       .sort({ createdAt: -1 });
     res.json({ success: true, data: posts });
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Server error fetching posts' });
+    console.error('Blog Fetch Error:', error);
+    res.status(500).json({ success: false, error: error.message, stack: error.stack });
   }
 });
 
@@ -24,7 +25,8 @@ router.get('/:slug', async (req, res) => {
     }
     res.json({ success: true, data: post });
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Server error fetching post' });
+    console.error('Single Blog Fetch Error:', error);
+    res.status(500).json({ success: false, error: error.message, stack: error.stack });
   }
 });
 
