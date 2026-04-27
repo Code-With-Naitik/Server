@@ -10,34 +10,30 @@ const uploadsDir = process.env.VERCEL ? path.join('/tmp', 'uploads') : 'uploads/
 const router = express.Router();
 const upload = multer({ dest: uploadsDir }); // Temporary storage
 
-router.post('/remove-bg', checkUsageLimit, upload.single('image_file'), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ success: false, error: 'No image file uploaded' });
-  }
-
+// Helper to process a single file
+const removeBgFromFile = async (file) => {
   const REMOVE_BG_API_KEY = process.env.REMOVE_BG_API_KEY;
 
-  // Mock Mode for Demo (If no real API key is set or set to 'mock_key')
+  // Mock Mode
   if (!REMOVE_BG_API_KEY || REMOVE_BG_API_KEY === 'mock_key') {
-    // In mock mode, we just return the original image to simulate processing
-    setTimeout(() => {
-      try {
-        const fileBuffer = fs.readFileSync(req.file.path);
-        res.set('Content-Type', 'image/png');
-        res.send(fileBuffer);
-        fs.unlinkSync(req.file.path); // cleanup
-      } catch (err) {
-        if (req.file) fs.unlinkSync(req.file.path);
-        res.status(500).json({ success: false, error: 'Mock processing failed' });
-      }
-    }, 1500); // simulate network delay
-    return;
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        try {
+          const fileBuffer = fs.readFileSync(file.path);
+          fs.unlinkSync(file.path);
+          resolve({ buffer: fileBuffer, originalName: file.originalname });
+        } catch (err) {
+          if (file) fs.unlinkSync(file.path);
+          reject(err);
+        }
+      }, 1000);
+    });
   }
 
   try {
     const formData = new FormData();
     formData.append('size', 'auto');
-    formData.append('image_file', fs.createReadStream(req.file.path));
+    formData.append('image_file', fs.createReadStream(file.path));
 
     const response = await axios({
       method: 'post',
@@ -50,18 +46,38 @@ router.post('/remove-bg', checkUsageLimit, upload.single('image_file'), async (r
       },
     });
 
-    // Cleanup: Remove the temporary uploaded file
-    fs.unlinkSync(req.file.path);
-
-    // Send the processed image back to the client
-    res.set('Content-Type', 'image/png');
-    res.send(response.data);
+    fs.unlinkSync(file.path);
+    return { buffer: response.data, originalName: file.originalname };
   } catch (error) {
-    // Cleanup even on error
-    if (req.file) fs.unlinkSync(req.file.path);
+    if (file) fs.unlinkSync(file.path);
+    throw error;
+  }
+};
 
-    console.error('Error removing background:', error.response?.data?.toString() || error.message);
-    res.status(500).json({ success: false, error: 'Background removal failed. API error.' });
+router.post('/remove-bg', checkUsageLimit, upload.array('image_files', 5), async (req, res) => {
+  if (!req.files || req.files.length === 0) {
+    return res.status(400).json({ success: false, error: 'No image files uploaded' });
+  }
+
+  try {
+    const results = await Promise.all(req.files.map(file => removeBgFromFile(file)));
+    
+    // If only one file, send back as binary (original behavior)
+    if (results.length === 1) {
+      res.set('Content-Type', 'image/png');
+      return res.send(results[0].buffer);
+    }
+
+    // If multiple files, send as JSON with base64 (since multipart/related is complex)
+    const base64Results = results.map(r => ({
+      name: r.originalName,
+      data: `data:image/png;base64,${r.buffer.toString('base64')}`
+    }));
+
+    res.json({ success: true, files: base64Results });
+  } catch (error) {
+    console.error('Error removing backgrounds:', error.message);
+    res.status(500).json({ success: false, error: 'Background removal failed for one or more files.' });
   }
 });
 

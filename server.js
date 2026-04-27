@@ -45,13 +45,25 @@ try {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
 } catch (err) {
-  console.error('Error creating uploads directory:', err); 
+  console.error('Error creating uploads directory:', err);
 }
 
 // Database Connection
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('MongoDB connected successfully'))
-  .catch((err) => console.error('MongoDB connection error:', err));
+const connectDB = async () => {
+  try {
+    const conn = await mongoose.connect(process.env.MONGO_URI, {
+      family: 4 // Force IPv4 to avoid SRV/DNS resolution issues
+    });
+    console.log(`MongoDB Connected: ${conn.connection.host}`);
+  } catch (err) {
+    console.error(`MongoDB Error: ${err.message}`);
+    console.error('Tip: If you see ECONNREFUSED for querySrv, try changing your DNS to 8.8.8.8 or using the non-SRV connection string.');
+    // Don't exit in development to allow other features to work if possible
+    if (process.env.NODE_ENV === 'production') process.exit(1);
+  }
+};
+
+connectDB();
 
 // Routes
 app.use('/api/image', require('./routes/image.routes'));
