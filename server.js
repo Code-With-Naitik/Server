@@ -19,7 +19,7 @@ app.use(morgan('dev'));
 
 // CORS Config
 const corsOptions = {
-  origin: process.env.CLIENT_URL || 'http://localhost:5180',
+  origin: process.env.CLIENT_URL || 'http://localhost:5180' || 'http://localhost:5173',
   optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions));
