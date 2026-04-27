@@ -24,4 +24,14 @@ router.post('/', async (req, res) => {
   }
 });
 
+// Get all contact messages (Admin/Verification)
+router.get('/', async (req, res) => {
+  try {
+    const messages = await ContactMessage.find().sort({ createdAt: -1 });
+    res.status(200).json({ success: true, count: messages.length, data: messages });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to fetch contact messages' });
+  }
+});
+
 module.exports = router;
