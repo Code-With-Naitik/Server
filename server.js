@@ -11,6 +11,9 @@ const fs = require('fs');
 // Load env vars
 dotenv.config();
 
+// Disable buffering to prevent hanging when DB is down
+mongoose.set('bufferCommands', false);
+
 const app = express();
 
 // Security and Logging Middlewares

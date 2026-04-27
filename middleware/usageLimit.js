@@ -1,8 +1,14 @@
+const mongoose = require('mongoose');
 const UsageLog = require('../models/UsageLog');
 
 const MAX_FREE_IMAGES_PER_DAY = 5;
 
 const checkUsageLimit = async (req, res, next) => {
+  // If MongoDB is not connected, skip the check to prevent hanging
+  if (mongoose.connection.readyState !== 1) {
+    console.warn('MongoDB not connected. Skipping usage limit check.');
+    return next();
+  }
   try {
     const ip = req.ip || req.connection.remoteAddress;
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
