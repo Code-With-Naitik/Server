@@ -58,6 +58,10 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'API is running' });
 });
 
+app.get('/', (req, res) => {
+  res.status(200).send('BG-Remover Backend API is running. Use /api for endpoints.');
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
