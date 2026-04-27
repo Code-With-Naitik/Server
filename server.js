@@ -25,7 +25,18 @@ mongoose.set('bufferCommands', true);
 const app = express();
 
 // Security and Logging Middlewares
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      imgSrc: ["'self'", "data:", "http://localhost:5000", "https://*.remove.bg"],
+      connectSrc: ["'self'", "http://localhost:5000", "https://api.remove.bg"]
+    }
+  }
+}));
 app.use(morgan('dev'));
 
 // CORS Config
@@ -96,6 +107,13 @@ connectDB();
 app.use('/api/image', require('./routes/image.routes'));
 app.use('/api/blog', require('./routes/blog.routes'));
 app.use('/api/contact', require('./routes/contact.routes'));
+app.use('/api/gallery', require('./routes/gallery.routes'));
+app.use('/api/upload', require('./routes/upload.routes'));
+app.use('/api/auth', require('./routes/auth.routes'));
+
+// Serve static files
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/api/admin', require('./routes/admin.routes'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
