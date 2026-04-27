@@ -5,8 +5,10 @@ const FormData = require('form-data');
 const fs = require('fs');
 const checkUsageLimit = require('../middleware/usageLimit');
 
+const path = require('path');
+const uploadsDir = process.env.VERCEL ? path.join('/tmp', 'uploads') : 'uploads/';
 const router = express.Router();
-const upload = multer({ dest: 'uploads/' }); // Temporary storage
+const upload = multer({ dest: uploadsDir }); // Temporary storage
 
 router.post('/remove-bg', checkUsageLimit, upload.single('image_file'), async (req, res) => {
   if (!req.file) {
@@ -57,7 +59,7 @@ router.post('/remove-bg', checkUsageLimit, upload.single('image_file'), async (r
   } catch (error) {
     // Cleanup even on error
     if (req.file) fs.unlinkSync(req.file.path);
-    
+
     console.error('Error removing background:', error.response?.data?.toString() || error.message);
     res.status(500).json({ success: false, error: 'Background removal failed. API error.' });
   }

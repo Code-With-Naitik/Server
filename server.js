@@ -37,10 +37,15 @@ const limiter = rateLimit({
 });
 app.use('/api', limiter);
 
-// Ensure uploads dir exists (for temp file storage)
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir);
+// Ensure uploads dir exists (use /tmp on Vercel for write access)
+const uploadsDir = process.env.VERCEL ? path.join('/tmp', 'uploads') : path.join(__dirname, 'uploads');
+
+try {
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+} catch (err) {
+  console.error('Error creating uploads directory:', err);
 }
 
 // Database Connection
