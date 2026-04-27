@@ -45,7 +45,7 @@ try {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
 } catch (err) {
-  console.error('Error creating uploads directory:', err);
+  console.error('Error creating uploads directory:', err); 
 }
 
 // Database Connection
