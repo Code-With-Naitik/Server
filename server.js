@@ -50,12 +50,20 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // In development, allow all origins or the whitelist
-    if (!origin || process.env.NODE_ENV === 'development' || allowedOrigins.indexOf(origin) !== -1) {
-      return callback(null, true);
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+    
+    // Check if origin is in whitelist or is a vercel subdomain
+    const isAllowed = allowedOrigins.includes(origin) || 
+                     origin.endsWith('.vercel.app') || 
+                     process.env.NODE_ENV === 'development';
+
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      console.warn(`CORS Blocked: Origin ${origin} not allowed`);
+      callback(new Error('Not allowed by CORS'));
     }
-    var msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-    return callback(new Error(msg), false);
   },
   optionsSuccessStatus: 200,
   credentials: true
