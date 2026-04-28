@@ -9,13 +9,6 @@ const path = require('path');
 const fs = require('fs');
 const dns = require('dns');
 
-// Force DNS resolver for MongoDB SRV resolution
-try {
-  dns.setServers(['8.8.8.8', '8.8.4.4']);
-} catch (e) {
-  console.warn('Could not set custom DNS servers');
-}
-
 // Load env vars
 dotenv.config();
 
