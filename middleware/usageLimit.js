@@ -1,39 +1,59 @@
-const mongoose = require('mongoose');
+const User = require('../models/User');
 const UsageLog = require('../models/UsageLog');
 
-const MAX_FREE_IMAGES_PER_DAY = 50;
+const MAX_FREE_CREDITS_PER_DAY = 5;
 
 const checkUsageLimit = async (req, res, next) => {
-  // If MongoDB is not connected, skip the check to prevent hanging
-  if (mongoose.connection.readyState !== 1) {
-    console.warn('MongoDB not connected. Skipping usage limit check.');
-    return next();
-  }
   try {
+    // If user is authenticated, use credit system
+    if (req.user) {
+      const user = await User.findById(req.user.id);
+      
+      // Reset credits if it's a new day (for free users)
+      const now = new Date();
+      const lastReset = new Date(user.lastCreditReset);
+      
+      if (now.toDateString() !== lastReset.toDateString()) {
+        if (!user.isPremium) {
+          user.credits = MAX_FREE_CREDITS_PER_DAY;
+        }
+        user.lastCreditReset = now;
+        await user.save();
+      }
+
+      if (!user.isPremium && user.credits <= 0) {
+        return res.status(402).json({
+          success: false,
+          error: 'Out of credits. Please upgrade to Pro for unlimited removals.',
+        });
+      }
+
+      // We'll deduct the credit in the actual route handler after success
+      req.userObj = user; // Pass user object to route handler
+      return next();
+    }
+
+    // Fallback for non-logged in users (IP-based limit)
     const ip = req.ip || req.connection.remoteAddress;
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const today = new Date().toISOString().split('T')[0];
 
     let log = await UsageLog.findOne({ ip, date: today });
-
     if (!log) {
       log = new UsageLog({ ip, date: today, count: 0 });
     }
 
-    if (log.count >= MAX_FREE_IMAGES_PER_DAY) {
-      return res.status(429).json({
+    if (log.count >= MAX_FREE_CREDITS_PER_DAY) {
+      return res.status(402).json({
         success: false,
-        error: 'Daily limit reached. Please upgrade to premium for unlimited background removal.',
+        error: 'Guest limit reached (5 per day). Please sign up to get more or upgrade.',
       });
     }
 
-    // Increment count
     log.count += 1;
     await log.save();
-
     next();
   } catch (err) {
-    console.error('Error checking usage limit:', err);
-    // On error, let them pass through rather than blocking the service
+    console.error('Usage check error:', err);
     next();
   }
 };

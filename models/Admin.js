@@ -28,6 +28,15 @@ const AdminSchema = new mongoose.Schema({
     enum: ['admin', 'superadmin'],
     default: 'admin'
   },
+  isPremium: {
+    type: Boolean,
+    default: false
+  },
+  subscriptionPlan: {
+    type: String,
+    enum: ['free', 'monthly', 'lifetime'],
+    default: 'free'
+  },
   createdAt: {
     type: Date,
     default: Date.now

@@ -43,21 +43,22 @@ app.use(morgan('dev'));
 const allowedOrigins = [
   process.env.CLIENT_URL,
   'http://localhost:5173',
+  'http://localhost:5175',
   'http://localhost:5180',
   'https://bg-remover-eight-rho.vercel.app'
 ].filter(Boolean);
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) === -1) {
-      var msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      return callback(new Error(msg), false);
+    // In development, allow all origins or the whitelist
+    if (!origin || process.env.NODE_ENV === 'development' || allowedOrigins.indexOf(origin) !== -1) {
+      return callback(null, true);
     }
-    return callback(null, true);
+    var msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+    return callback(new Error(msg), false);
   },
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
+  credentials: true
 };
 app.use(cors(corsOptions));
 
@@ -110,6 +111,7 @@ app.use('/api/contact', require('./routes/contact.routes'));
 app.use('/api/gallery', require('./routes/gallery.routes'));
 app.use('/api/upload', require('./routes/upload.routes'));
 app.use('/api/auth', require('./routes/auth.routes'));
+app.use('/api/payment', require('./routes/payment.routes'));
 
 // Serve static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));

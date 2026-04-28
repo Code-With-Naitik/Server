@@ -1,157 +1,195 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
-const Admin = require('../models/Admin');
+const User = require('../models/User');
 const { protect } = require('../middleware/auth');
 
-// @desc    Register a new admin
+// @desc    Register a user
 // @route   POST /api/auth/signup
-// @access  Public (Should be restricted in production or require a master key)
+// @access  Public
 router.post('/signup', async (req, res) => {
   try {
-    const { username, email, password, adminKey } = req.body;
+    let { name, email, password, adminKey } = req.body;
 
-    // Optional: Secret key check for signup to prevent anyone from creating an admin account
-    if (process.env.ADMIN_SIGNUP_KEY && adminKey !== process.env.ADMIN_SIGNUP_KEY) {
-      return res.status(401).json({ success: false, message: 'Invalid admin signup key' });
+    if (email) email = email.trim().toLowerCase();
+
+    const userExists = await User.findOne({ email });
+    if (userExists) {
+      return res.status(400).json({ success: false, message: 'User already exists' });
     }
 
-    const adminExists = await Admin.findOne({ $or: [{ email }, { username }] });
-    if (adminExists) {
-      return res.status(400).json({ success: false, message: 'Admin already exists' });
+    // Set role to admin if valid admin key provided
+    let role = 'user';
+    if (adminKey && adminKey === process.env.ADMIN_SIGNUP_KEY) {
+      role = 'admin';
     }
 
-    const admin = await Admin.create({
-      username,
+    console.log(`User registration: ${email}, Role assigned: ${role}, AdminKey provided: ${!!adminKey}`);
+
+    const user = await User.create({
+      name,
       email,
-      password
+      password,
+      role,
     });
+
+    const token = user.getSignedJwtToken();
 
     res.status(201).json({
       success: true,
-      message: 'Admin registered successfully'
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isPremium: user.isPremium,
+        credits: user.credits,
+        subscriptionPlan: user.subscriptionPlan,
+      },
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// @desc    Login admin
+// @desc    Login user
 // @route   POST /api/auth/signin
 // @access  Public
 router.post('/signin', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    let { email, password } = req.body;
 
-    // Check for admin
-    const admin = await Admin.findOne({ email }).select('+password');
-    if (!admin) {
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: 'Please provide an email and password' });
+    }
+
+    email = email.trim().toLowerCase();
+    console.log(`Signin attempt for: ${email}`);
+
+    const user = await User.findOne({ email }).select('+password');
+    if (!user) {
+      console.log(`Signin failed: User not found (${email})`);
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
-    // Check if password matches
-    const isMatch = await admin.matchPassword(password);
+    const isMatch = await user.matchPassword(password);
     if (!isMatch) {
+      console.log(`Signin failed: Password mismatch for ${email}`);
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
-    // Create token
-    const token = jwt.sign(
-      { id: admin._id, role: admin.role },
-      process.env.JWT_SECRET || 'secret',
-      { expiresIn: '30d' }
-    );
+    const token = user.getSignedJwtToken();
 
     res.status(200).json({
       success: true,
       token,
-      admin: {
-        id: admin._id,
-        username: admin.username,
-        email: admin.email,
-        role: admin.role
-      }
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isPremium: user.isPremium,
+        credits: user.credits,
+        subscriptionPlan: user.subscriptionPlan,
+      },
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// @desc    Get current logged in admin
+// @desc    Get current user profile
 // @route   GET /api/auth/me
 // @access  Private
-router.get('/me', async (req, res) => {
+router.get('/me', protect, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({ success: false, message: 'Not authorized' });
-    }
+    const user = await User.findById(req.user.id);
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
-    const admin = await Admin.findById(decoded.id);
-
-    if (!admin) {
-      return res.status(404).json({ success: false, message: 'Admin not found' });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
 
     res.status(200).json({
       success: true,
-      admin: {
-        id: admin._id,
-        username: admin.username,
-        email: admin.email,
-        role: admin.role
-      }
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isPremium: user.isPremium,
+        credits: user.credits,
+        subscriptionPlan: user.subscriptionPlan,
+      },
     });
   } catch (error) {
     res.status(401).json({ success: false, message: 'Not authorized' });
   }
 });
 
-// Update admin profile (Protected)
+// @desc    Update profile
+// @route   PUT /api/auth/update-profile
+// @access  Private
 router.put('/update-profile', protect, async (req, res) => {
   try {
-    const { username, email } = req.body;
-    const admin = await Admin.findById(req.user._id);
+    const fieldsToUpdate = {
+      name: req.body.name,
+      email: req.body.email,
+    };
 
-    if (admin) {
-      admin.username = username || admin.username;
-      admin.email = email || admin.email;
-      
-      const updatedAdmin = await admin.save();
-      res.json({
-        success: true,
-        data: {
-          _id: updatedAdmin._id,
-          username: updatedAdmin.username,
-          email: updatedAdmin.email,
-          role: updatedAdmin.role
-        }
-      });
-    } else {
-      res.status(404).json({ success: false, error: 'Admin not found' });
-    }
+    const user = await User.findByIdAndUpdate(req.user.id, fieldsToUpdate, {
+      new: true,
+      runValidators: true,
+    });
+
+    res.status(200).json({
+      success: true,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isPremium: user.isPremium,
+        credits: user.credits,
+        subscriptionPlan: user.subscriptionPlan,
+      },
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Change password (Protected)
-router.put('/change-password', protect, async (req, res) => {
+// @desc    Debug: List all users (DEV ONLY)
+// @route   GET /api/auth/debug/users
+router.get('/debug/users', async (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ message: 'Not allowed in production' });
+  }
   try {
-    const { currentPassword, newPassword } = req.body;
-    const admin = await Admin.findById(req.user._id).select('+password');
-
-    if (!admin || !(await admin.matchPassword(currentPassword))) {
-      return res.status(401).json({ success: false, error: 'Invalid current password' });
-    }
-
-    admin.password = newPassword;
-    await admin.save();
-
-    res.json({ success: true, message: 'Password updated successfully' });
+    const users = await User.find({}).select('+password');
+    res.status(200).json({ success: true, count: users.length, users });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// @desc    Debug: Promote user to admin (DEV ONLY)
+// @route   POST /api/auth/debug/promote
+router.post('/debug/promote', async (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ message: 'Not allowed in production' });
+  }
+  try {
+    const { email } = req.body;
+    const user = await User.findOneAndUpdate(
+      { email: email.trim().toLowerCase() },
+      { role: 'admin' },
+      { new: true }
+    );
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.status(200).json({ success: true, message: `User ${email} promoted to admin`, user });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
