@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { protect } = require('../middleware/auth');
+const { protect, authorize } = require('../middleware/auth');
 const BlogPost = require('../models/BlogPost');
 const ContactMessage = require('../models/ContactMessage');
 const UsageLog = require('../models/UsageLog');
@@ -32,8 +32,8 @@ router.get('/public-stats', async (req, res) => {
 
 // @desc    Get dashboard statistics
 // @route   GET /api/admin/stats
-// @access  Private
-router.get('/stats', protect, async (req, res) => {
+// @access  Private (Admin Only)
+router.get('/stats', protect, authorize('admin'), async (req, res) => {
   try {
     const totalBlogs = await BlogPost.countDocuments();
     const totalMessages = await ContactMessage.countDocuments();
@@ -64,8 +64,8 @@ router.get('/stats', protect, async (req, res) => {
 
 // @desc    Get detailed analytics
 // @route   GET /api/admin/analytics
-// @access  Private
-router.get('/analytics', protect, async (req, res) => {
+// @access  Private (Admin Only)
+router.get('/analytics', protect, authorize('admin'), async (req, res) => {
   try {
     // Get usage trends for the last 7 days
     const sevenDaysAgo = new Date();
