@@ -3,6 +3,7 @@ const multer = require('multer');
 const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
+const { removeBackground } = require('@imgly/background-removal-node');
 const { getAuthUser } = require('../middleware/auth');
 const checkUsageLimit = require('../middleware/usageLimit');
 
@@ -16,18 +17,18 @@ const removeBgFromFile = async (file, size = 'auto') => {
   const REMOVE_BG_API_KEY = process.env.REMOVE_BG_API_KEY;
 
   if (!REMOVE_BG_API_KEY || REMOVE_BG_API_KEY === 'mock_key') {
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        try {
-          const fileBuffer = fs.readFileSync(file.path);
-          fs.unlinkSync(file.path);
-          resolve({ buffer: fileBuffer, originalName: file.originalname });
-        } catch (err) {
-          if (file) fs.unlinkSync(file.path);
-          reject(err);
-        }
-      }, 1000);
-    });
+    try {
+      const fileUri = 'file://' + file.path.replace(/\\/g, '/');
+      const blob = await removeBackground(fileUri);
+      const buffer = Buffer.from(await blob.arrayBuffer());
+      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      return { buffer, originalName: file.originalname };
+    } catch (err) {
+      if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      console.error('Local BG Removal Error:', err);
+      throw new Error(`Local background removal failed: ${err.message}`);
+    }
   }
 
   try {
@@ -49,8 +50,17 @@ const removeBgFromFile = async (file, size = 'auto') => {
     if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
     return { buffer: response.data, originalName: file.originalname };
   } catch (error) {
-    if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-    throw error;
+    console.error('Remove.bg API failed, falling back to local AI:', error.message);
+    try {
+      const fileUri = 'file://' + file.path.replace(/\\/g, '/');
+      const blob = await removeBackground(fileUri);
+      const buffer = Buffer.from(await blob.arrayBuffer());
+      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      return { buffer, originalName: file.originalname };
+    } catch (fallbackErr) {
+      if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      throw new Error(`Remove.bg failed (${error.message}) AND Local AI failed (${fallbackErr.message})`);
+    }
   }
 };
 
@@ -79,14 +89,14 @@ router.post('/remove-bg', getAuthUser, checkUsageLimit, upload.array('image_file
       data: `data:image/png;base64,${r.buffer.toString('base64')}`
     }));
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       files: base64Results,
-      credits: req.userObj ? req.userObj.credits : null 
+      credits: req.userObj ? req.userObj.credits : null
     });
   } catch (error) {
     console.error('Error removing backgrounds:', error.message);
-    res.status(500).json({ success: false, error: 'Failed to process images' });
+    res.status(500).json({ success: false, error: error.message || 'Failed to process images' });
   }
 });
 

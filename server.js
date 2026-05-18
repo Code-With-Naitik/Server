@@ -90,18 +90,15 @@ try {
 // Database Connection
 const connectDB = async () => {
   try {
-    const uri = process.env.MONGO_URI;
-    const maskedUri = uri.replace(/\/\/.*@/, '//****:****@');
-    console.log(`Connecting to MongoDB with: ${maskedUri}`);
-    
-    const conn = await mongoose.connect(uri, {
+    const conn = await mongoose.connect(process.env.MONGO_URI, {
       family: 4, // Force IPv4 for SRV resolution
-      serverSelectionTimeoutMS: 10000 // Increased timeout
+      serverSelectionTimeoutMS: 5000 // Fail after 5 seconds instead of hanging
     });
     console.log(`MongoDB Connected: ${conn.connection.host}`);
   } catch (err) {
     console.error(`MongoDB Error: ${err.message}`);
     console.error('Tip: If you see ECONNREFUSED for querySrv, try changing your DNS to 8.8.8.8 or using the non-SRV connection string.');
+    // Don't exit in development to allow other features to work if possible
     if (process.env.NODE_ENV === 'production') process.exit(1);
   }
 };
@@ -117,8 +114,10 @@ app.use('/api/upload', require('./routes/upload.routes'));
 app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/payment', require('./routes/payment.routes'));
 
-// Serve static files
+// Serve static files (uploads, blog images, gallery images)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads/gallery', express.static(path.join(__dirname, 'uploads', 'gallery')));
+app.use('/uploads/blog', express.static(path.join(__dirname, 'uploads', 'blog')));
 app.use('/api/admin', require('./routes/admin.routes'));
 
 // Health check endpoint
@@ -145,3 +144,11 @@ if (require.main === module) {
 }
 
 module.exports = app;
+
+// triggered restart
+
+// Trigger backend restart
+
+// fallback restart
+
+// Fixes applied restart

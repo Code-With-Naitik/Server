@@ -1,10 +1,15 @@
 const User = require('../models/User');
 const UsageLog = require('../models/UsageLog');
+const mongoose = require('mongoose');
 
 const MAX_FREE_CREDITS_PER_DAY = 5;
 
 const checkUsageLimit = async (req, res, next) => {
   try {
+    if (mongoose.connection.readyState !== 1) {
+      // Skip DB check if disconnected to prevent timeouts
+      return next();
+    }
     // If user is authenticated, use credit system
     if (req.user) {
       const user = await User.findById(req.user.id);
