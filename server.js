@@ -144,11 +144,4 @@ if (require.main === module) {
 }
 
 module.exports = app;
-
-// triggered restart
-
-// Trigger backend restart
-
-// fallback restart
-
-// Fixes applied restart
+// Vercel deploy trigger — 2026-05-19
