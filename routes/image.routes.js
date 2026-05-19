@@ -3,7 +3,9 @@ const multer = require('multer');
 const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
-const { removeBackground } = require('@imgly/background-removal-node');
+// NOTE: @imgly/background-removal-node is NOT imported at the top level.
+// It's lazy-loaded below because its WASM/native binaries crash
+// Vercel serverless functions when imported unconditionally at startup.
 const { getAuthUser } = require('../middleware/auth');
 const checkUsageLimit = require('../middleware/usageLimit');
 
@@ -16,8 +18,10 @@ const upload = multer({ dest: uploadsDir });
 const removeBgFromFile = async (file, size = 'auto') => {
   const REMOVE_BG_API_KEY = process.env.REMOVE_BG_API_KEY;
 
-  if (!REMOVE_BG_API_KEY || REMOVE_BG_API_KEY === 'mock_key') {
+  // Use local AI only when no real API key AND not on Vercel (can't run WASM there)
+  if ((!REMOVE_BG_API_KEY || REMOVE_BG_API_KEY === 'mock_key') && !process.env.VERCEL) {
     try {
+      const { removeBackground } = require('@imgly/background-removal-node');
       const fileUri = 'file://' + file.path.replace(/\\/g, '/');
       const blob = await removeBackground(fileUri);
       const buffer = Buffer.from(await blob.arrayBuffer());
@@ -25,10 +29,15 @@ const removeBgFromFile = async (file, size = 'auto') => {
       return { buffer, originalName: file.originalname };
     } catch (err) {
       if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-      if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
       console.error('Local BG Removal Error:', err);
       throw new Error(`Local background removal failed: ${err.message}`);
     }
+  }
+
+  // On Vercel with no API key — throw a clear error
+  if (!REMOVE_BG_API_KEY || REMOVE_BG_API_KEY === 'mock_key') {
+    if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+    throw new Error('REMOVE_BG_API_KEY is not configured. Please add it in Vercel environment variables.');
   }
 
   try {
@@ -50,19 +59,28 @@ const removeBgFromFile = async (file, size = 'auto') => {
     if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
     return { buffer: response.data, originalName: file.originalname };
   } catch (error) {
-    console.error('Remove.bg API failed, falling back to local AI:', error.message);
-    try {
-      const fileUri = 'file://' + file.path.replace(/\\/g, '/');
-      const blob = await removeBackground(fileUri);
-      const buffer = Buffer.from(await blob.arrayBuffer());
-      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-      return { buffer, originalName: file.originalname };
-    } catch (fallbackErr) {
-      if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-      throw new Error(`Remove.bg failed (${error.message}) AND Local AI failed (${fallbackErr.message})`);
+    console.error('Remove.bg API failed:', error.message);
+
+    // Only attempt local fallback if NOT on Vercel
+    if (!process.env.VERCEL) {
+      try {
+        const { removeBackground } = require('@imgly/background-removal-node');
+        const fileUri = 'file://' + file.path.replace(/\\/g, '/');
+        const blob = await removeBackground(fileUri);
+        const buffer = Buffer.from(await blob.arrayBuffer());
+        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+        return { buffer, originalName: file.originalname };
+      } catch (fallbackErr) {
+        if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+        throw new Error(`Remove.bg failed (${error.message}) AND Local AI failed (${fallbackErr.message})`);
+      }
     }
+
+    if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+    throw new Error(`Background removal failed: ${error.message}`);
   }
 };
+
 
 router.post('/remove-bg', getAuthUser, checkUsageLimit, upload.array('image_files', 5), async (req, res) => {
   if (!req.files || req.files.length === 0) {
