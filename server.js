@@ -98,8 +98,7 @@ const connectDB = async () => {
   } catch (err) {
     console.error(`MongoDB Error: ${err.message}`);
     console.error('Tip: If you see ECONNREFUSED for querySrv, try changing your DNS to 8.8.8.8 or using the non-SRV connection string.');
-    // Don't exit in development to allow other features to work if possible
-    if (process.env.NODE_ENV === 'production') process.exit(1);
+    // Do not call process.exit(1) on Vercel to prevent serverless function crash
   }
 };
 
@@ -122,7 +121,18 @@ app.use('/api/admin', require('./routes/admin.routes'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'ok', message: 'API is running' });
+  const dbState = mongoose.connection.readyState;
+  const states = {
+    0: 'disconnected',
+    1: 'connected',
+    2: 'connecting',
+    3: 'disconnecting'
+  };
+  res.status(200).json({ 
+    status: dbState === 1 ? 'ok' : 'error', 
+    database: states[dbState] || 'unknown',
+    message: 'API is running' 
+  });
 });
 
 app.get('/', (req, res) => {

@@ -8,9 +8,16 @@ const { protect } = require('../middleware/auth');
 const router = express.Router();
 
 // ── Gallery image upload storage ──
-const galleryDir = path.join(__dirname, '../uploads/gallery');
-if (!fs.existsSync(galleryDir)) {
-  fs.mkdirSync(galleryDir, { recursive: true });
+const galleryDir = process.env.VERCEL
+  ? path.join('/tmp', 'uploads', 'gallery')
+  : path.join(__dirname, '../uploads/gallery');
+
+try {
+  if (!fs.existsSync(galleryDir)) {
+    fs.mkdirSync(galleryDir, { recursive: true });
+  }
+} catch (err) {
+  console.error('Error creating gallery uploads directory:', err);
 }
 
 const storage = multer.diskStorage({

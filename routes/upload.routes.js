@@ -9,9 +9,15 @@ const router = express.Router();
 // Configure Storage
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const dir = path.join(__dirname, '../uploads/blog');
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    const dir = process.env.VERCEL
+      ? path.join('/tmp', 'uploads', 'blog')
+      : path.join(__dirname, '../uploads/blog');
+    try {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    } catch (err) {
+      console.error('Error creating blog uploads directory:', err);
     }
     cb(null, dir);
   },
@@ -21,7 +27,7 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ 
+const upload = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
   fileFilter: (req, file, cb) => {
