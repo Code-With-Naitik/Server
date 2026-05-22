@@ -66,24 +66,124 @@ const removeBgMock = async (filePath) => {
   }
 };
 
+const removeBgHF = async (filePath) => {
+  const HF_API_TOKEN = process.env.HF_API_TOKEN || '';
+  const headers = {
+    'Content-Type': 'application/octet-stream'
+  };
+  if (HF_API_TOKEN) {
+    headers['Authorization'] = `Bearer ${HF_API_TOKEN}`;
+  }
+
+  const maxRetries = 3;
+  let delay = 3000;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await axios({
+        method: 'post',
+        url: 'https://api-inference.huggingface.co/models/briaai/RMBG-1.4',
+        data: fs.readFileSync(filePath),
+        headers: headers,
+        responseType: 'arraybuffer',
+        timeout: 30000,
+      });
+
+      if (response.data && response.data.length > 0) {
+        return response.data;
+      }
+      throw new Error('Received empty response from Hugging Face');
+    } catch (error) {
+      console.warn(`Hugging Face attempt ${attempt} failed:`, error.message);
+      
+      let isLoading = false;
+      if (error.response && error.response.data) {
+        try {
+          const jsonString = Buffer.from(error.response.data).toString('utf-8');
+          const errObj = JSON.parse(jsonString);
+          if (errObj.error && errObj.error.includes('loading')) {
+            isLoading = true;
+            if (errObj.estimated_time) {
+              delay = Math.min((errObj.estimated_time + 2) * 1000, 15000);
+            }
+          }
+        } catch (e) {
+          // ignore parse errors
+        }
+      }
+
+      if (attempt === maxRetries) {
+        throw error;
+      }
+
+      console.log(`Waiting ${delay}ms before retrying Hugging Face inference...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      if (!isLoading) {
+        delay *= 2;
+      }
+    }
+  }
+};
+
 const removeBgFromFile = async (file, size = 'auto') => {
   const REMOVE_BG_API_KEY = process.env.REMOVE_BG_API_KEY || '';
   const apiKeys = REMOVE_BG_API_KEY.split(',').map(k => k.trim()).filter(Boolean);
+  let lastRemoveBgError = null;
 
-  // If no keys configured, or if the first key is 'mock_key', fall back immediately
-  if (apiKeys.length === 0 || apiKeys[0] === 'mock_key') {
+  // 1. Try Remove.bg keys if configured
+  if (apiKeys.length > 0 && apiKeys[0] !== 'mock_key') {
+    for (let i = 0; i < apiKeys.length; i++) {
+      const currentKey = apiKeys[i];
+      try {
+        console.log(`Attempting Remove.bg key ${i + 1}/${apiKeys.length}...`);
+        const formData = new FormData();
+        formData.append('size', size);
+        formData.append('image_file', fs.createReadStream(file.path));
+
+        const response = await axios({
+          method: 'post',
+          url: 'https://api.remove.bg/v1.0/removebg',
+          data: formData,
+          responseType: 'arraybuffer',
+          headers: {
+            ...formData.getHeaders(),
+            'X-Api-Key': currentKey,
+          },
+        });
+
+        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+        return { buffer: response.data, originalName: file.originalname, fallbackUsed: false };
+      } catch (error) {
+        const status = error.response ? error.response.status : null;
+        console.error(`Remove.bg API key ${i + 1}/${apiKeys.length} failed with status ${status}:`, error.message);
+        lastRemoveBgError = error;
+      }
+    }
+  }
+
+  // 2. If Remove.bg keys fail or are not configured, try Hugging Face Inference API
+  console.log('Attempting Hugging Face RMBG-1.4 API...');
+  try {
+    const buffer = await removeBgHF(file.path);
+    if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+    return { buffer, originalName: file.originalname, fallbackUsed: false };
+  } catch (hfError) {
+    const prevErrors = lastRemoveBgError ? `Remove.bg: ${lastRemoveBgError.message}. ` : '';
+    console.error(`Hugging Face background removal failed: ${hfError.message}`);
+
+    // 3. Fall back to local AI (Local dev) or Jimp mock (Vercel production)
     if (process.env.VERCEL) {
-      console.warn('REMOVE_BG_API_KEY is not configured or set to mock_key on Vercel. Falling back to Jimp processing.');
+      console.warn('Falling back to low-quality Jimp processing on Vercel.');
       try {
         const buffer = await removeBgMock(file.path);
         if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
         return { buffer, originalName: file.originalname, fallbackUsed: true };
-      } catch (err) {
+      } catch (jimpErr) {
         if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-        throw new Error(`Jimp fallback background removal failed: ${err.message}`);
+        throw new Error(`${prevErrors}HF failed: ${hfError.message}. Jimp failed: ${jimpErr.message}`);
       }
     } else {
-      // Local AI fallback
+      console.log('Falling back to local AI background removal.');
       try {
         const { removeBackground } = require('@imgly/background-removal-node');
         const fileUri = 'file://' + file.path.replace(/\\/g, '/');
@@ -91,66 +191,10 @@ const removeBgFromFile = async (file, size = 'auto') => {
         const buffer = Buffer.from(await blob.arrayBuffer());
         if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
         return { buffer, originalName: file.originalname, fallbackUsed: false };
-      } catch (err) {
+      } catch (localErr) {
         if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-        console.error('Local BG Removal Error:', err);
-        throw new Error(`Local background removal failed: ${err.message}`);
+        throw new Error(`${prevErrors}HF failed: ${hfError.message}. Local AI failed: ${localErr.message}`);
       }
-    }
-  }
-
-  // Iterate over available keys
-  for (let i = 0; i < apiKeys.length; i++) {
-    const currentKey = apiKeys[i];
-    try {
-      const formData = new FormData();
-      formData.append('size', size);
-      formData.append('image_file', fs.createReadStream(file.path));
-
-      const response = await axios({
-        method: 'post',
-        url: 'https://api.remove.bg/v1.0/removebg',
-        data: formData,
-        responseType: 'arraybuffer',
-        headers: {
-          ...formData.getHeaders(),
-          'X-Api-Key': currentKey,
-        },
-      });
-
-      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-      return { buffer: response.data, originalName: file.originalname, fallbackUsed: false };
-    } catch (error) {
-      const status = error.response ? error.response.status : null;
-      console.error(`Remove.bg API key ${i + 1}/${apiKeys.length} failed with status ${status}:`, error.message);
-
-      // If this is the last key, perform fallback
-      if (i === apiKeys.length - 1) {
-        if (process.env.VERCEL) {
-          console.warn('All Remove.bg API keys failed on Vercel. Falling back to Jimp processing.');
-          try {
-            const buffer = await removeBgMock(file.path);
-            if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-            return { buffer, originalName: file.originalname, fallbackUsed: true };
-          } catch (err) {
-            if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-            throw new Error(`Remove.bg failed (${error.message}) AND Jimp fallback failed (${err.message})`);
-          }
-        } else {
-          try {
-            const { removeBackground } = require('@imgly/background-removal-node');
-            const fileUri = 'file://' + file.path.replace(/\\/g, '/');
-            const blob = await removeBackground(fileUri);
-            const buffer = Buffer.from(await blob.arrayBuffer());
-            if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-            return { buffer, originalName: file.originalname, fallbackUsed: false };
-          } catch (fallbackErr) {
-            if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-            throw new Error(`Remove.bg failed (${error.message}) AND Local AI failed (${fallbackErr.message})`);
-          }
-        }
-      }
-      // Otherwise, loop continues to try the next key
     }
   }
 };
