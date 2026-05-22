@@ -67,16 +67,17 @@ const removeBgMock = async (filePath) => {
 };
 
 const removeBgFromFile = async (file, size = 'auto') => {
-  const REMOVE_BG_API_KEY = process.env.REMOVE_BG_API_KEY;
+  const REMOVE_BG_API_KEY = process.env.REMOVE_BG_API_KEY || '';
+  const apiKeys = REMOVE_BG_API_KEY.split(',').map(k => k.trim()).filter(Boolean);
 
-  // On Vercel, if API key is missing or set to mock_key, use Jimp fallback
-  if (!REMOVE_BG_API_KEY || REMOVE_BG_API_KEY === 'mock_key') {
+  // If no keys configured, or if the first key is 'mock_key', fall back immediately
+  if (apiKeys.length === 0 || apiKeys[0] === 'mock_key') {
     if (process.env.VERCEL) {
-      console.warn('REMOVE_BG_API_KEY is not configured or mock_key on Vercel. Falling back to Jimp processing.');
+      console.warn('REMOVE_BG_API_KEY is not configured or set to mock_key on Vercel. Falling back to Jimp processing.');
       try {
         const buffer = await removeBgMock(file.path);
         if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-        return { buffer, originalName: file.originalname };
+        return { buffer, originalName: file.originalname, fallbackUsed: true };
       } catch (err) {
         if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
         throw new Error(`Jimp fallback background removal failed: ${err.message}`);
@@ -89,7 +90,7 @@ const removeBgFromFile = async (file, size = 'auto') => {
         const blob = await removeBackground(fileUri);
         const buffer = Buffer.from(await blob.arrayBuffer());
         if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-        return { buffer, originalName: file.originalname };
+        return { buffer, originalName: file.originalname, fallbackUsed: false };
       } catch (err) {
         if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
         console.error('Local BG Removal Error:', err);
@@ -98,51 +99,58 @@ const removeBgFromFile = async (file, size = 'auto') => {
     }
   }
 
-  // Otherwise, invoke the real Remove.bg API key
-  try {
-    const formData = new FormData();
-    formData.append('size', size);
-    formData.append('image_file', fs.createReadStream(file.path));
+  // Iterate over available keys
+  for (let i = 0; i < apiKeys.length; i++) {
+    const currentKey = apiKeys[i];
+    try {
+      const formData = new FormData();
+      formData.append('size', size);
+      formData.append('image_file', fs.createReadStream(file.path));
 
-    const response = await axios({
-      method: 'post',
-      url: 'https://api.remove.bg/v1.0/removebg',
-      data: formData,
-      responseType: 'arraybuffer',
-      headers: {
-        ...formData.getHeaders(),
-        'X-Api-Key': REMOVE_BG_API_KEY,
-      },
-    });
+      const response = await axios({
+        method: 'post',
+        url: 'https://api.remove.bg/v1.0/removebg',
+        data: formData,
+        responseType: 'arraybuffer',
+        headers: {
+          ...formData.getHeaders(),
+          'X-Api-Key': currentKey,
+        },
+      });
 
-    if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-    return { buffer: response.data, originalName: file.originalname };
-  } catch (error) {
-    console.error('Remove.bg API failed:', error.message);
+      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      return { buffer: response.data, originalName: file.originalname, fallbackUsed: false };
+    } catch (error) {
+      const status = error.response ? error.response.status : null;
+      console.error(`Remove.bg API key ${i + 1}/${apiKeys.length} failed with status ${status}:`, error.message);
 
-    // If API failed (e.g. 402 payment required or network error), use fallback
-    if (process.env.VERCEL) {
-      console.warn('Remove.bg API failed on Vercel. Falling back to Jimp processing.');
-      try {
-        const buffer = await removeBgMock(file.path);
-        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-        return { buffer, originalName: file.originalname };
-      } catch (err) {
-        if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-        throw new Error(`Remove.bg failed (${error.message}) AND Jimp fallback failed (${err.message})`);
+      // If this is the last key, perform fallback
+      if (i === apiKeys.length - 1) {
+        if (process.env.VERCEL) {
+          console.warn('All Remove.bg API keys failed on Vercel. Falling back to Jimp processing.');
+          try {
+            const buffer = await removeBgMock(file.path);
+            if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+            return { buffer, originalName: file.originalname, fallbackUsed: true };
+          } catch (err) {
+            if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+            throw new Error(`Remove.bg failed (${error.message}) AND Jimp fallback failed (${err.message})`);
+          }
+        } else {
+          try {
+            const { removeBackground } = require('@imgly/background-removal-node');
+            const fileUri = 'file://' + file.path.replace(/\\/g, '/');
+            const blob = await removeBackground(fileUri);
+            const buffer = Buffer.from(await blob.arrayBuffer());
+            if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+            return { buffer, originalName: file.originalname, fallbackUsed: false };
+          } catch (fallbackErr) {
+            if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+            throw new Error(`Remove.bg failed (${error.message}) AND Local AI failed (${fallbackErr.message})`);
+          }
+        }
       }
-    } else {
-      try {
-        const { removeBackground } = require('@imgly/background-removal-node');
-        const fileUri = 'file://' + file.path.replace(/\\/g, '/');
-        const blob = await removeBackground(fileUri);
-        const buffer = Buffer.from(await blob.arrayBuffer());
-        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-        return { buffer, originalName: file.originalname };
-      } catch (fallbackErr) {
-        if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-        throw new Error(`Remove.bg failed (${error.message}) AND Local AI failed (${fallbackErr.message})`);
-      }
+      // Otherwise, loop continues to try the next key
     }
   }
 };
@@ -161,6 +169,12 @@ router.post('/remove-bg', getAuthUser, checkUsageLimit, upload.array('image_file
     if (req.userObj && !req.userObj.isPremium) {
       req.userObj.credits -= req.files.length;
       await req.userObj.save();
+    }
+
+    const fallbackUsed = results.some(r => r.fallbackUsed);
+    if (fallbackUsed) {
+      res.set('X-Fallback-Processed', 'true');
+      res.set('Access-Control-Expose-Headers', 'X-Fallback-Processed');
     }
 
     if (results.length === 1) {
