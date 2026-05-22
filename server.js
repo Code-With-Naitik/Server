@@ -124,7 +124,52 @@ const connectDB = async () => {
   }
 };
 
+const ensureConnection = async (req, res, next) => {
+  if (mongoose.connection.readyState === 1) {
+    return next();
+  }
+  
+  console.log(`DB connection state is ${mongoose.connection.readyState}. Resolving connection...`);
+  
+  try {
+    if (mongoose.connection.readyState === 2) {
+      // Already connecting, wait for it
+      await new Promise((resolve) => {
+        const onConnected = () => {
+          cleanup();
+          resolve();
+        };
+        const onError = () => {
+          cleanup();
+          resolve(); // Resolve anyway to prevent request hang
+        };
+        const cleanup = () => {
+          mongoose.connection.removeListener('connected', onConnected);
+          mongoose.connection.removeListener('error', onError);
+        };
+        mongoose.connection.on('connected', onConnected);
+        mongoose.connection.on('error', onError);
+        // Timeout after 4 seconds
+        setTimeout(() => {
+          cleanup();
+          resolve();
+        }, 4000);
+      });
+    } else {
+      // Disconnected or disconnecting, trigger connection
+      await connectDB();
+    }
+  } catch (err) {
+    console.error('Database connection wait failed:', err);
+  }
+  
+  next();
+};
+
 connectDB();
+
+// Apply connection assurance to all /api routes
+app.use('/api', ensureConnection);
 
 // Routes
 app.use('/api/image', require('./routes/image.routes'));
