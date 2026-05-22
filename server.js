@@ -88,16 +88,38 @@ try {
 }
 
 // Database Connection
+let lastDbError = null;
+
+// Add event listeners to mongoose connection
+mongoose.connection.on('error', (err) => {
+  console.error('Mongoose connection error:', err);
+  lastDbError = err.message;
+});
+
+mongoose.connection.on('connected', () => {
+  console.log('Mongoose connected successfully');
+  lastDbError = null;
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.log('Mongoose disconnected');
+});
+
 const connectDB = async () => {
   try {
+    if (!process.env.MONGO_URI) {
+      throw new Error('MONGO_URI is not defined in the environment variables');
+    }
     const conn = await mongoose.connect(process.env.MONGO_URI, {
       family: 4, // Force IPv4 for SRV resolution
       serverSelectionTimeoutMS: 5000 // Fail after 5 seconds instead of hanging
     });
     console.log(`MongoDB Connected: ${conn.connection.host}`);
+    lastDbError = null;
   } catch (err) {
     console.error(`MongoDB Error: ${err.message}`);
     console.error('Tip: If you see ECONNREFUSED for querySrv, try changing your DNS to 8.8.8.8 or using the non-SRV connection string.');
+    lastDbError = err.message;
     // Do not call process.exit(1) on Vercel to prevent serverless function crash
   }
 };
@@ -128,9 +150,22 @@ app.get('/api/health', (req, res) => {
     2: 'connecting',
     3: 'disconnecting'
   };
+  
+  // Mask connection URI for safety
+  let maskedUri = 'not defined';
+  if (process.env.MONGO_URI) {
+    try {
+      maskedUri = process.env.MONGO_URI.replace(/:([^:@]+)@/, ':***@');
+    } catch (e) {
+      maskedUri = 'parse error';
+    }
+  }
+
   res.status(200).json({ 
     status: dbState === 1 ? 'ok' : 'error', 
     database: states[dbState] || 'unknown',
+    uri: maskedUri,
+    error: lastDbError,
     message: 'API is running' 
   });
 });
