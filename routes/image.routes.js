@@ -75,54 +75,67 @@ const removeBgHF = async (filePath) => {
     headers['Authorization'] = `Bearer ${HF_API_TOKEN}`;
   }
 
-  const maxRetries = 3;
-  let delay = 3000;
+  // We will try RMBG-2.0 first, and fallback to RMBG-1.4
+  const models = [
+    'briaai/RMBG-2.0',
+    'briaai/RMBG-1.4'
+  ];
 
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const response = await axios({
-        method: 'post',
-        url: 'https://api-inference.huggingface.co/models/briaai/RMBG-1.4',
-        data: fs.readFileSync(filePath),
-        headers: headers,
-        responseType: 'arraybuffer',
-        timeout: 30000,
-      });
+  let lastError = null;
 
-      if (response.data && response.data.length > 0) {
-        return response.data;
-      }
-      throw new Error('Received empty response from Hugging Face');
-    } catch (error) {
-      console.warn(`Hugging Face attempt ${attempt} failed:`, error.message);
-      
-      let isLoading = false;
-      if (error.response && error.response.data) {
-        try {
-          const jsonString = Buffer.from(error.response.data).toString('utf-8');
-          const errObj = JSON.parse(jsonString);
-          if (errObj.error && errObj.error.includes('loading')) {
-            isLoading = true;
-            if (errObj.estimated_time) {
-              delay = Math.min((errObj.estimated_time + 2) * 1000, 15000);
-            }
-          }
-        } catch (e) {
-          // ignore parse errors
+  for (const model of models) {
+    const maxRetries = 2;
+    let delay = 2000;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`Attempting Hugging Face model ${model} (attempt ${attempt}/2)...`);
+        const response = await axios({
+          method: 'post',
+          url: `https://api-inference.huggingface.co/models/${model}`,
+          data: fs.readFileSync(filePath),
+          headers: headers,
+          responseType: 'arraybuffer',
+          timeout: 25000,
+        });
+
+        if (response.data && response.data.length > 0) {
+          console.log(`Successfully removed background using Hugging Face model: ${model}`);
+          return response.data;
         }
-      }
+        throw new Error(`Received empty response from Hugging Face model ${model}`);
+      } catch (error) {
+        console.warn(`Hugging Face model ${model} attempt ${attempt} failed:`, error.message);
+        lastError = error;
 
-      if (attempt === maxRetries) {
-        throw error;
-      }
+        let isLoading = false;
+        if (error.response && error.response.data) {
+          try {
+            const jsonString = Buffer.from(error.response.data).toString('utf-8');
+            const errObj = JSON.parse(jsonString);
+            if (errObj.error && errObj.error.includes('loading')) {
+              isLoading = true;
+              if (errObj.estimated_time) {
+                delay = Math.min((errObj.estimated_time + 1) * 1000, 10000);
+              }
+            }
+          } catch (e) {
+            // ignore parse errors
+          }
+        }
 
-      console.log(`Waiting ${delay}ms before retrying Hugging Face inference...`);
-      await new Promise(resolve => setTimeout(resolve, delay));
-      if (!isLoading) {
-        delay *= 2;
+        if (attempt < maxRetries) {
+          console.log(`Waiting ${delay}ms before retrying model ${model}...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          if (!isLoading) {
+            delay *= 2;
+          }
+        }
       }
     }
   }
+
+  throw lastError || new Error('All Hugging Face models failed');
 };
 
 const removeBgFromFile = async (file, size = 'auto') => {
