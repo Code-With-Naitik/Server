@@ -3,6 +3,7 @@ const multer = require('multer');
 const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
+const Jimp = require('jimp');
 // NOTE: @imgly/background-removal-node is NOT imported at the top level.
 // It's lazy-loaded below because its WASM/native binaries crash
 // Vercel serverless functions when imported unconditionally at startup.
@@ -15,31 +16,89 @@ const uploadsDir = process.env.VERCEL ? path.join('/tmp', 'uploads') : path.join
 const router = express.Router();
 const upload = multer({ dest: uploadsDir });
 
+// Jimp fallback for serverless environment (removes solid/near-white backgrounds cleanly)
+const removeBgMock = async (filePath) => {
+  try {
+    const image = await Jimp.read(filePath);
+    const width = image.bitmap.width;
+    const height = image.bitmap.height;
+    
+    // Sample the corner pixels to calculate average background color
+    const corners = [
+      Jimp.intToRGBA(image.getPixelColor(0, 0)),
+      Jimp.intToRGBA(image.getPixelColor(width - 1, 0)),
+      Jimp.intToRGBA(image.getPixelColor(0, height - 1)),
+      Jimp.intToRGBA(image.getPixelColor(width - 1, height - 1))
+    ];
+    
+    const avgR = Math.round(corners.reduce((sum, c) => sum + c.r, 0) / 4);
+    const avgG = Math.round(corners.reduce((sum, c) => sum + c.g, 0) / 4);
+    const avgB = Math.round(corners.reduce((sum, c) => sum + c.b, 0) / 4);
+    
+    const tolerance = 45;
+    
+    for (let x = 0; x < width; x++) {
+      for (let y = 0; y < height; y++) {
+        const color = Jimp.intToRGBA(image.getPixelColor(x, y));
+        
+        // Color distance to the sampled background
+        const distance = Math.sqrt(
+          Math.pow(color.r - avgR, 2) +
+          Math.pow(color.g - avgG, 2) +
+          Math.pow(color.b - avgB, 2)
+        );
+        
+        // Detect near-white/light gray as well
+        const isNearWhite = color.r > 225 && color.g > 225 && color.b > 225;
+        
+        if (distance < tolerance || isNearWhite) {
+          // Set transparent (Alpha = 0)
+          image.setPixelColor(Jimp.rgbaToInt(color.r, color.g, color.b, 0), x, y);
+        }
+      }
+    }
+    
+    return await image.getBufferAsync(Jimp.MIME_PNG);
+  } catch (err) {
+    console.error('Jimp background removal fallback processing error:', err);
+    // If it fails, return the original image buffer
+    return fs.readFileSync(filePath);
+  }
+};
+
 const removeBgFromFile = async (file, size = 'auto') => {
   const REMOVE_BG_API_KEY = process.env.REMOVE_BG_API_KEY;
 
-  // Use local AI only when no real API key AND not on Vercel (can't run WASM there)
-  if ((!REMOVE_BG_API_KEY || REMOVE_BG_API_KEY === 'mock_key') && !process.env.VERCEL) {
-    try {
-      const { removeBackground } = require('@imgly/background-removal-node');
-      const fileUri = 'file://' + file.path.replace(/\\/g, '/');
-      const blob = await removeBackground(fileUri);
-      const buffer = Buffer.from(await blob.arrayBuffer());
-      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-      return { buffer, originalName: file.originalname };
-    } catch (err) {
-      if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-      console.error('Local BG Removal Error:', err);
-      throw new Error(`Local background removal failed: ${err.message}`);
+  // On Vercel, if API key is missing or set to mock_key, use Jimp fallback
+  if (!REMOVE_BG_API_KEY || REMOVE_BG_API_KEY === 'mock_key') {
+    if (process.env.VERCEL) {
+      console.warn('REMOVE_BG_API_KEY is not configured or mock_key on Vercel. Falling back to Jimp processing.');
+      try {
+        const buffer = await removeBgMock(file.path);
+        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+        return { buffer, originalName: file.originalname };
+      } catch (err) {
+        if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+        throw new Error(`Jimp fallback background removal failed: ${err.message}`);
+      }
+    } else {
+      // Local AI fallback
+      try {
+        const { removeBackground } = require('@imgly/background-removal-node');
+        const fileUri = 'file://' + file.path.replace(/\\/g, '/');
+        const blob = await removeBackground(fileUri);
+        const buffer = Buffer.from(await blob.arrayBuffer());
+        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+        return { buffer, originalName: file.originalname };
+      } catch (err) {
+        if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+        console.error('Local BG Removal Error:', err);
+        throw new Error(`Local background removal failed: ${err.message}`);
+      }
     }
   }
 
-  // On Vercel with no API key — throw a clear error
-  if (!REMOVE_BG_API_KEY || REMOVE_BG_API_KEY === 'mock_key') {
-    if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-    throw new Error('REMOVE_BG_API_KEY is not configured. Please add it in Vercel environment variables.');
-  }
-
+  // Otherwise, invoke the real Remove.bg API key
   try {
     const formData = new FormData();
     formData.append('size', size);
@@ -61,8 +120,18 @@ const removeBgFromFile = async (file, size = 'auto') => {
   } catch (error) {
     console.error('Remove.bg API failed:', error.message);
 
-    // Only attempt local fallback if NOT on Vercel
-    if (!process.env.VERCEL) {
+    // If API failed (e.g. 402 payment required or network error), use fallback
+    if (process.env.VERCEL) {
+      console.warn('Remove.bg API failed on Vercel. Falling back to Jimp processing.');
+      try {
+        const buffer = await removeBgMock(file.path);
+        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+        return { buffer, originalName: file.originalname };
+      } catch (err) {
+        if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+        throw new Error(`Remove.bg failed (${error.message}) AND Jimp fallback failed (${err.message})`);
+      }
+    } else {
       try {
         const { removeBackground } = require('@imgly/background-removal-node');
         const fileUri = 'file://' + file.path.replace(/\\/g, '/');
@@ -75,9 +144,6 @@ const removeBgFromFile = async (file, size = 'auto') => {
         throw new Error(`Remove.bg failed (${error.message}) AND Local AI failed (${fallbackErr.message})`);
       }
     }
-
-    if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-    throw new Error(`Background removal failed: ${error.message}`);
   }
 };
 
