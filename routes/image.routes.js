@@ -179,30 +179,6 @@ const removeBgFromFile = async (file, size = 'auto') => {
   try {
     const buffer = await removeBgHF(file.path);
     if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-<<<<<<< HEAD
-    return { buffer: response.data, originalName: file.originalname };
-  } catch (error) {
-    let apiErrorMsg = error.message;
-    
-    // Since responseType is arraybuffer, decode response data to string to see real error
-    if (error.response && error.response.data) {
-      try {
-        const decodedErrorString = Buffer.from(error.response.data).toString('utf8');
-        const parsedJson = JSON.parse(decodedErrorString);
-        if (parsedJson && parsedJson.errors && parsedJson.errors[0]) {
-          apiErrorMsg = parsedJson.errors[0].title || parsedJson.errors[0].detail || apiErrorMsg;
-        }
-      } catch (e) {
-        // Not a JSON error or unable to parse buffer
-      }
-    }
-
-    console.error(`Remove.bg API failed: ${apiErrorMsg}`);
-
-    // Only attempt local fallback if NOT on Vercel
-    if (!process.env.VERCEL) {
-      console.log('Attempting local AI background removal fallback...');
-=======
     return { buffer, originalName: file.originalname, fallbackUsed: false };
   } catch (hfError) {
     const prevErrors = lastRemoveBgError ? `Remove.bg: ${lastRemoveBgError.message}. ` : '';
@@ -221,7 +197,6 @@ const removeBgFromFile = async (file, size = 'auto') => {
       }
     } else {
       console.log('Falling back to local AI background removal.');
->>>>>>> 77939a19c8181bf60d859b2b735cf40a1c469d56
       try {
         const { removeBackground } = require('@imgly/background-removal-node');
         const fileUri = 'file://' + file.path.replace(/\\/g, '/');
@@ -231,18 +206,9 @@ const removeBgFromFile = async (file, size = 'auto') => {
         return { buffer, originalName: file.originalname, fallbackUsed: false };
       } catch (localErr) {
         if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-<<<<<<< HEAD
-        throw new Error(`Remove.bg API failed (${apiErrorMsg}) AND Local AI fallback failed (${fallbackErr.message})`);
-      }
-    }
-
-    if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-    throw new Error(`Background removal failed: ${apiErrorMsg}`);
-=======
         throw new Error(`${prevErrors}HF failed: ${hfError.message}. Local AI failed: ${localErr.message}`);
       }
     }
->>>>>>> 77939a19c8181bf60d859b2b735cf40a1c469d56
   }
 };
 

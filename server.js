@@ -128,16 +128,11 @@ const connectDB = async () => {
     console.log(`MongoDB Connected: ${conn.connection.host}`);
     lastDbError = null;
   } catch (err) {
-<<<<<<< HEAD
     console.error(`MongoDB Connection Error: ${err.message}`);
-    console.error('ACTION NEEDED: Add IP 152.58.35.218 to MongoDB Atlas Network Access whitelist.');
-    // Do NOT exit - server stays alive; health check still works
-=======
-    console.error(`MongoDB Error: ${err.message}`);
     console.error('Tip: If you see ECONNREFUSED for querySrv, try changing your DNS to 8.8.8.8 or using the non-SRV connection string.');
+    console.error('ACTION NEEDED: Ensure your IP is added to the MongoDB Atlas Network Access whitelist.');
     lastDbError = err.message;
-    // Do not call process.exit(1) on Vercel to prevent serverless function crash
->>>>>>> 77939a19c8181bf60d859b2b735cf40a1c469d56
+    // Do NOT exit - server stays alive; health check still works
   }
 };
 
@@ -185,10 +180,12 @@ const ensureConnection = async (req, res, next) => {
 
 connectDB();
 
-<<<<<<< HEAD
+// Apply connection assurance to all /api routes
+app.use('/api', ensureConnection);
+
 // -- DB Guard Middleware --
 // Returns 503 immediately if MongoDB is not yet connected (readyState != 1)
-// This prevents routes from hanging for 10s when Atlas is unreachable.
+// This prevents routes from hanging when Atlas is unreachable.
 const dbRoutes = ['/api/blog', '/api/gallery', '/api/contact', '/api/auth', '/api/admin', '/api/payment', '/api/upload'];
 app.use((req, res, next) => {
   const needsDB = dbRoutes.some(r => req.originalUrl.startsWith(r));
@@ -202,10 +199,6 @@ app.use((req, res, next) => {
   }
   next();
 });
-=======
-// Apply connection assurance to all /api routes
-app.use('/api', ensureConnection);
->>>>>>> 77939a19c8181bf60d859b2b735cf40a1c469d56
 
 // Routes
 app.use('/api/image', require('./routes/image.routes'));
