@@ -8,13 +8,18 @@ const { protect } = require('../middleware/auth');
 const router = express.Router();
 
 // ── Gallery image upload storage ──
-const galleryDir = path.join(__dirname, '../uploads/gallery');
-if (!fs.existsSync(galleryDir)) {
-  fs.mkdirSync(galleryDir, { recursive: true });
-}
+const getGalleryDir = () => {
+  const dir = process.env.VERCEL
+    ? path.join('/tmp', 'uploads', 'gallery')
+    : path.join(__dirname, '../uploads/gallery');
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+};
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, galleryDir),
+  destination: (req, file, cb) => cb(null, getGalleryDir()),
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
     cb(null, uniqueSuffix + path.extname(file.originalname));
@@ -102,7 +107,7 @@ router.delete('/:id', protect, async (req, res) => {
     const tryDelete = (url) => {
       if (url && url.includes('/uploads/gallery/')) {
         const filename = url.split('/uploads/gallery/')[1];
-        const filepath = path.join(galleryDir, filename);
+        const filepath = path.join(getGalleryDir(), filename);
         if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
       }
     };

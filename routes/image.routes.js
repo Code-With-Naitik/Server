@@ -59,10 +59,26 @@ const removeBgFromFile = async (file, size = 'auto') => {
     if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
     return { buffer: response.data, originalName: file.originalname };
   } catch (error) {
-    console.error('Remove.bg API failed:', error.message);
+    let apiErrorMsg = error.message;
+    
+    // Since responseType is arraybuffer, decode response data to string to see real error
+    if (error.response && error.response.data) {
+      try {
+        const decodedErrorString = Buffer.from(error.response.data).toString('utf8');
+        const parsedJson = JSON.parse(decodedErrorString);
+        if (parsedJson && parsedJson.errors && parsedJson.errors[0]) {
+          apiErrorMsg = parsedJson.errors[0].title || parsedJson.errors[0].detail || apiErrorMsg;
+        }
+      } catch (e) {
+        // Not a JSON error or unable to parse buffer
+      }
+    }
+
+    console.error(`Remove.bg API failed: ${apiErrorMsg}`);
 
     // Only attempt local fallback if NOT on Vercel
     if (!process.env.VERCEL) {
+      console.log('Attempting local AI background removal fallback...');
       try {
         const { removeBackground } = require('@imgly/background-removal-node');
         const fileUri = 'file://' + file.path.replace(/\\/g, '/');
@@ -72,12 +88,12 @@ const removeBgFromFile = async (file, size = 'auto') => {
         return { buffer, originalName: file.originalname };
       } catch (fallbackErr) {
         if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-        throw new Error(`Remove.bg failed (${error.message}) AND Local AI failed (${fallbackErr.message})`);
+        throw new Error(`Remove.bg API failed (${apiErrorMsg}) AND Local AI fallback failed (${fallbackErr.message})`);
       }
     }
 
     if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-    throw new Error(`Background removal failed: ${error.message}`);
+    throw new Error(`Background removal failed: ${apiErrorMsg}`);
   }
 };
 

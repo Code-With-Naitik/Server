@@ -12,7 +12,12 @@ const dns = require('dns');
 // Load env vars
 dotenv.config();
 
-// Enable buffering but with a strict timeout
+// Force Google/Cloudflare DNS to resolve MongoDB Atlas SRV records
+// ISP DNS often blocks _mongodb._tcp SRV queries causing ECONNREFUSED
+require('dns').setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);
+require('dns').setDefaultResultOrder('ipv4first');
+
+// Buffer commands until DB is ready (mongoose default)
 mongoose.set('bufferCommands', true);
 
 const app = express();
@@ -89,21 +94,43 @@ try {
 
 // Database Connection
 const connectDB = async () => {
+  if (!process.env.MONGO_URI) {
+    console.error('MONGO_URI not set in environment variables!');
+    return;
+  }
   try {
     const conn = await mongoose.connect(process.env.MONGO_URI, {
-      family: 4, // Force IPv4 for SRV resolution
-      serverSelectionTimeoutMS: 5000 // Fail after 5 seconds instead of hanging
+      family: 4,
+      serverSelectionTimeoutMS: 8000,
+      connectTimeoutMS: 8000,
+      socketTimeoutMS: 30000,
     });
     console.log(`MongoDB Connected: ${conn.connection.host}`);
   } catch (err) {
-    console.error(`MongoDB Error: ${err.message}`);
-    console.error('Tip: If you see ECONNREFUSED for querySrv, try changing your DNS to 8.8.8.8 or using the non-SRV connection string.');
-    // Don't exit in development to allow other features to work if possible
-    if (process.env.NODE_ENV === 'production') process.exit(1);
+    console.error(`MongoDB Connection Error: ${err.message}`);
+    console.error('ACTION NEEDED: Add IP 152.58.35.218 to MongoDB Atlas Network Access whitelist.');
+    // Do NOT exit - server stays alive; health check still works
   }
 };
 
 connectDB();
+
+// -- DB Guard Middleware --
+// Returns 503 immediately if MongoDB is not yet connected (readyState != 1)
+// This prevents routes from hanging for 10s when Atlas is unreachable.
+const dbRoutes = ['/api/blog', '/api/gallery', '/api/contact', '/api/auth', '/api/admin', '/api/payment', '/api/upload'];
+app.use((req, res, next) => {
+  const needsDB = dbRoutes.some(r => req.originalUrl.startsWith(r));
+  if (needsDB && mongoose.connection.readyState !== 1) {
+    return res.status(503).json({
+      success: false,
+      error: 'Database unavailable. Please try again shortly.',
+      hint: 'MongoDB Atlas IP not whitelisted or connecting...',
+      dbState: mongoose.connection.readyState // 0=disconnected, 1=connected, 2=connecting
+    });
+  }
+  next();
+});
 
 // Routes
 app.use('/api/image', require('./routes/image.routes'));

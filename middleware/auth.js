@@ -7,26 +7,30 @@ const protect = async (req, res, next) => {
 
   if (
     req.headers.authorization &&
-    req.headers.authorization.startsWith('Bearer')
+    req.headers.authorization.toLowerCase().startsWith('bearer')
   ) {
     token = req.headers.authorization.split(' ')[1];
   }
 
   if (!token) {
-    return res.status(401).json({ success: false, message: 'Not authorized' });
+    console.warn(`[Auth Middleware] Authorization header missing or format invalid. URL: ${req.originalUrl}`);
+    return res.status(401).json({ success: false, message: 'Not authorized: Token missing or invalid format' });
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
+    const secret = process.env.JWT_SECRET || 'secret';
+    const decoded = jwt.verify(token, secret);
     req.user = await User.findById(decoded.id);
 
     if (!req.user) {
-      return res.status(401).json({ success: false, message: 'User not found' });
+      console.warn(`[Auth Middleware] User not found in DB for Decoded ID: ${decoded.id}`);
+      return res.status(401).json({ success: false, message: 'Not authorized: User not found' });
     }
 
     next();
   } catch (err) {
-    return res.status(401).json({ success: false, message: 'Not authorized' });
+    console.error(`[Auth Middleware] JWT Verification Failed: ${err.message}`);
+    return res.status(401).json({ success: false, message: `Not authorized: ${err.message}` });
   }
 };
 
@@ -36,16 +40,21 @@ const getAuthUser = async (req, res, next) => {
 
   if (
     req.headers.authorization &&
-    req.headers.authorization.startsWith('Bearer')
+    req.headers.authorization.toLowerCase().startsWith('bearer')
   ) {
     token = req.headers.authorization.split(' ')[1];
   }
 
   if (token) {
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
+      const secret = process.env.JWT_SECRET || 'secret';
+      const decoded = jwt.verify(token, secret);
       req.user = await User.findById(decoded.id);
+      if (req.user) {
+        console.log(`[Auth Middleware] Optional Auth succeeded for user: ${req.user.email}`);
+      }
     } catch (err) {
+      console.warn(`[Auth Middleware] Optional Auth Token failed verification: ${err.message}`);
       // Ignore invalid token for optional auth
     }
   }
