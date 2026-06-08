@@ -93,12 +93,32 @@ try {
 }
 
 // Database Connection
+let lastDbError = null;
+
+// Add event listeners to mongoose connection
+mongoose.connection.on('error', (err) => {
+  console.error('Mongoose connection error:', err);
+  lastDbError = err.message;
+});
+
+mongoose.connection.on('connected', () => {
+  console.log('Mongoose connected successfully');
+  lastDbError = null;
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.log('Mongoose disconnected');
+});
+
 const connectDB = async () => {
   if (!process.env.MONGO_URI) {
     console.error('MONGO_URI not set in environment variables!');
     return;
   }
   try {
+    if (!process.env.MONGO_URI) {
+      throw new Error('MONGO_URI is not defined in the environment variables');
+    }
     const conn = await mongoose.connect(process.env.MONGO_URI, {
       family: 4,
       serverSelectionTimeoutMS: 8000,
@@ -106,15 +126,66 @@ const connectDB = async () => {
       socketTimeoutMS: 30000,
     });
     console.log(`MongoDB Connected: ${conn.connection.host}`);
+    lastDbError = null;
   } catch (err) {
+<<<<<<< HEAD
     console.error(`MongoDB Connection Error: ${err.message}`);
     console.error('ACTION NEEDED: Add IP 152.58.35.218 to MongoDB Atlas Network Access whitelist.');
     // Do NOT exit - server stays alive; health check still works
+=======
+    console.error(`MongoDB Error: ${err.message}`);
+    console.error('Tip: If you see ECONNREFUSED for querySrv, try changing your DNS to 8.8.8.8 or using the non-SRV connection string.');
+    lastDbError = err.message;
+    // Do not call process.exit(1) on Vercel to prevent serverless function crash
+>>>>>>> 77939a19c8181bf60d859b2b735cf40a1c469d56
   }
+};
+
+const ensureConnection = async (req, res, next) => {
+  if (mongoose.connection.readyState === 1) {
+    return next();
+  }
+  
+  console.log(`DB connection state is ${mongoose.connection.readyState}. Resolving connection...`);
+  
+  try {
+    if (mongoose.connection.readyState === 2) {
+      // Already connecting, wait for it
+      await new Promise((resolve) => {
+        const onConnected = () => {
+          cleanup();
+          resolve();
+        };
+        const onError = () => {
+          cleanup();
+          resolve(); // Resolve anyway to prevent request hang
+        };
+        const cleanup = () => {
+          mongoose.connection.removeListener('connected', onConnected);
+          mongoose.connection.removeListener('error', onError);
+        };
+        mongoose.connection.on('connected', onConnected);
+        mongoose.connection.on('error', onError);
+        // Timeout after 4 seconds
+        setTimeout(() => {
+          cleanup();
+          resolve();
+        }, 4000);
+      });
+    } else {
+      // Disconnected or disconnecting, trigger connection
+      await connectDB();
+    }
+  } catch (err) {
+    console.error('Database connection wait failed:', err);
+  }
+  
+  next();
 };
 
 connectDB();
 
+<<<<<<< HEAD
 // -- DB Guard Middleware --
 // Returns 503 immediately if MongoDB is not yet connected (readyState != 1)
 // This prevents routes from hanging for 10s when Atlas is unreachable.
@@ -131,6 +202,10 @@ app.use((req, res, next) => {
   }
   next();
 });
+=======
+// Apply connection assurance to all /api routes
+app.use('/api', ensureConnection);
+>>>>>>> 77939a19c8181bf60d859b2b735cf40a1c469d56
 
 // Routes
 app.use('/api/image', require('./routes/image.routes'));
@@ -149,7 +224,31 @@ app.use('/api/admin', require('./routes/admin.routes'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'ok', message: 'API is running' });
+  const dbState = mongoose.connection.readyState;
+  const states = {
+    0: 'disconnected',
+    1: 'connected',
+    2: 'connecting',
+    3: 'disconnecting'
+  };
+  
+  // Mask connection URI for safety
+  let maskedUri = 'not defined';
+  if (process.env.MONGO_URI) {
+    try {
+      maskedUri = process.env.MONGO_URI.replace(/:([^:@]+)@/, ':***@');
+    } catch (e) {
+      maskedUri = 'parse error';
+    }
+  }
+
+  res.status(200).json({ 
+    status: dbState === 1 ? 'ok' : 'error', 
+    database: states[dbState] || 'unknown',
+    uri: maskedUri,
+    error: lastDbError,
+    message: 'API is running' 
+  });
 });
 
 app.get('/', (req, res) => {

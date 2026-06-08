@@ -2,7 +2,7 @@ const User = require('../models/User');
 const UsageLog = require('../models/UsageLog');
 const mongoose = require('mongoose');
 
-const MAX_FREE_CREDITS_PER_DAY = 5;
+const MAX_FREE_CREDITS_PER_DAY = 10;
 
 const checkUsageLimit = async (req, res, next) => {
   try {
@@ -50,7 +50,7 @@ const checkUsageLimit = async (req, res, next) => {
     if (log.count >= MAX_FREE_CREDITS_PER_DAY) {
       return res.status(402).json({
         success: false,
-        error: 'Guest limit reached (5 per day). Please sign up to get more or upgrade.',
+        error: 'Guest limit reached (10 per day). Please sign up to get more or upgrade.',
       });
     }
 
